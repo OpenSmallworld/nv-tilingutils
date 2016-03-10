@@ -1,0 +1,505 @@
+_package sw
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+def_slotted_exemplar(:tile_boundary_generator,
+	## 
+	## Creates tilecacher configuration files based on the objects
+	## visible in the application view.
+	## 
+	{
+		{:buffer_distance, _unset},
+		{:map_view, _unset},
+		{:epsg4326_cs, _unset}
+	})
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_method tile_boundary_generator.new(map_view, _optional buffer_distance)
+	## 
+	## 
+	>> _clone.init(map_view, buffer_distance)
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_method tile_boundary_generator.init(map_view, _optional buffer_distance)
+	## 
+	## Instantiate a new object using the application MAP_VIEW and a
+	## optional value for the BUFFER_DISTANCE in database world
+	## units (default 10000).
+	##
+
+	.map_view << map_view
+	.buffer_distance << buffer_distance.default(10000)
+	_try 
+		.epsg4326_cs << .map_view.database.dataset(:gis).epsg_coordinate_system("EPSG:4326")
+	_when error
+		write("Could not find an EPSG:4326 coordinate system definition in the gis dataset")
+		_return
+	_endtry 
+
+	>> _self 
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_method tile_boundary_generator.generate_tile_config(factor, _optional params, simple?, a_stream, constraint_bounds)
+	## 
+	## This is the main method of the class. It will loop over the
+	## visible geometries in the current map view and will
+	## determine a bounding box around based on parameters.
+	##
+	## If SIMPLE? is set to true then a single bounding box that
+	## covers all of the visible geometry that is wholly within the
+	## current view bounds will be created. If SIMPLE? is false
+	## (which is the default) then the routine will create a number
+	## of smaller boxes that surround the geometries, which means
+	## that less whitespace will be covered by the sum of those
+	## areas. Less whitespace means less unnecessary tiles to
+	## process for caching purposes.
+	##
+	## FACTOR is used to place a cap on the maximum size that a
+	## given bounding box can be when SIMPLE? is true. Basically no
+	## box can be great than FACTOR * the buffer distance defined
+	## when this instance was created.
+	##
+	## PARAMS is a hash_table that contained parameters used to
+	## create the JSON output of this routine. A example template
+	## hash_table can be generated using
+	## tile_boundary_generator.sample_params().
+	##
+	## A_STREAM is an output stream to use to write the JSON out
+	## on. It defaults to !terminal! but if you wish to write the
+	## JSON to a file, supply a text_output_stream instance.
+	##
+	
+	_local bboxes << set.new()
+	_local gs << .map_view.get_visible_geometry_set()
+	_local bigbuf
+
+	simple? << simple?.default(_false)
+	a_stream << a_stream.default(!terminal!)
+	constraint_bounds << constraint_bounds.default(.map_view.current_view_bounds)
+
+	_for a_geom _over gs.fast_elements()
+	_loop
+		_if simple?
+		_then
+			_if constraint_bounds.contains?(a_geom.bounds)
+			_then
+				bd << bounding_box.new(a_geom.bounds.xmin - .buffer_distance, a_geom.bounds.ymin - .buffer_distance,
+						       a_geom.bounds.xmax + .buffer_distance, a_geom.bounds.ymax + .buffer_distance)
+				
+				_if bigbuf _is _unset
+				_then
+					bigbuf << bd
+				_else
+					bigbuf << bigbuf.union(bd)
+				_endif 
+			_endif 
+		_else 
+			_if constraint_bounds.contains?(a_geom.bounds)
+			_then
+				_for sr _over a_geom.sectors.fast_elements()
+				_loop
+					_for a_coord _over sr.fast_elements()
+					_loop
+						bd << bounding_box.new(a_coord.x - .buffer_distance, a_coord.y - .buffer_distance, a_coord.x + .buffer_distance, a_coord.y + .buffer_distance)
+						
+						_if bigbuf _is _unset
+						_then
+							bigbuf << bd
+						_else
+							_local add? << _true
+							
+							# If the current buffer is contained by an existing box then
+							# ignore it.
+							_for abox _over bboxes.fast_elements()
+							_loop
+								_if abox.contains?(bd)
+								_then
+									add? << _false 
+									_leave 
+								_endif 
+							_endloop
+							
+							_if add?
+							_then 
+								_local newbuf << bigbuf.union(bd)
+								
+								_if newbuf.width > (factor * .buffer_distance) _orif
+								    newbuf.height > (factor * .buffer_distance)
+								_then
+									# Store the current big buffer away and start a new one using
+									# the current bounds.
+									_if bigbuf _isnt _unset
+									_then 
+										bboxes.add(bigbuf)
+										bigbuf << bd
+									_endif 
+								_else
+									# The buffer is still less than the size we want, so carry on
+									# using it. 
+									bigbuf << newbuf
+								_endif
+							_endif 
+						_endif
+					_endloop
+				_endloop
+				
+				
+				#write("Done ", a_geom)
+			_else
+				#write("Excluding ", a_geom, " because it is outside window bounds")
+			_endif
+		_endif 
+	_endloop
+
+	# Eliminate any boxes that are within other boxes.
+
+
+	_if _not simple?
+	_then 
+		_for a_box _over bboxes.elements()
+		_loop
+			_local remove_current_box? << _false
+			
+			_for other_box _over bboxes.elements()
+			_loop
+				_if a_box _is other_box _then _continue _endif
+				
+				_if a_box.contains?(other_box)
+				_then
+					bboxes.remove(other_box)
+				_endif
+				
+				_if other_box.contains?(a_box)
+				_then
+					remove_current_box? << _true
+				_endif 
+			_endloop
+			
+			_if remove_current_box?
+			_then
+				bboxes.remove(a_box)
+			_endif 
+		_endloop
+	_else
+		_if bigbuf _isnt _unset
+		_then 
+			bboxes.add(bigbuf)
+		_endif 
+	_endif
+	
+	a_stream.write("{", newline_char, %", "cacheareas", %", ": [", newline_char)
+	_local s << bboxes.read_stream()
+	
+	_for i _over range(1, bboxes.size)
+	_loop
+		_local a_box << s.get()
+		a_box.draw_on(.map_view.window, line_style)
+		_self.output_bounds_as_latlon(a_box, params, a_stream)
+
+		_if i < bboxes.size
+		_then
+			a_stream.write(",", newline_char)
+		_endif 
+	_endloop
+	a_stream.write("]", newline_char, "}", newline_char)
+	
+	_return bigbuf
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_private _method tile_boundary_generator.output_bounds_as_latlon(bd, params, a_stream)
+	## 
+	## Helper method that produces JSON output that can be used by
+	## the tilecacher script.
+	##
+	
+	_dynamic !print_float_precision!
+	_local min << coordinate(bd.xmin, bd.ymin)
+	_local max << coordinate(bd.xmax, bd.ymax)
+	_local source_cs << .map_view.database.dataset(:gis).world.coordinate_system
+	_local tx << transform.new_converting_cs_to_cs(source_cs, .epsg4326_cs)
+	_local target_min << tx.convert(min)
+	_local target_max << tx.convert(max)
+
+	!print_float_precision! << 7
+	
+	a_stream.write("{", newline_char)
+	a_stream.write(%", "description", %", ": ", %", params[:description], %", ", ", newline_char)
+	a_stream.write(%", "servername", %", ": ", %", params[:servername], %", ", ", newline_char)
+	a_stream.write(%", "serverport", %", ": ", params[:serverport], ", ", newline_char)
+	a_stream.write(%", "layernames", %", ": [", params[:layernames], "], ", newline_char)
+	a_stream.write(%", "stylename", %", ": ", %", params[:stylename], %", ", ", newline_char)
+	a_stream.write(%", "format", %", ": ", %", params[:format], %", ", ", newline_char)
+	a_stream.write(%", "tilematrixset", %", ": ", %", params[:tilematrixset], %", ", ", newline_char)
+	a_stream.write(%", "startzoomlevel", %", ": ", params[:startzoomlevel], ", ", newline_char)
+	a_stream.write(%", "stopzoomlevel", %", ": ", params[:stopzoomlevel], ", ", newline_char)
+	a_stream.write(%", "bounds", %", ": {", newline_char)
+	a_stream.write(%", "minx", %", ": ", target_min.x, ",", newline_char)
+	a_stream.write(%", "miny", %", ": ", target_min.y, ",", newline_char)
+	a_stream.write(%", "maxx", %", ": ", target_max.x, ",", newline_char)
+	a_stream.write(%", "maxy", %", ": ", target_max.y, newline_char)
+	a_stream.write("}", newline_char)
+	a_stream.write("}", newline_char)
+	
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_method tile_boundary_generator.goto_zoom_level(zoom)
+	## 
+	## Changes the scale of the current map view to (approximately)
+	## match the supplied zoom level ZOOM.
+	##
+	
+	_local scale << 500000000.0 / (2.to_power(zoom))
+
+	write("Scale: ", scale)
+
+	.map_view.view_scale << scale
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_method tile_boundary_generator.current_map_density(_optional constraint_bounds)
+	## 
+	## Returns a crude density ratio based on the geometries that are
+	## visible in the current view and the dimensions of that
+	## view. The wider the view, the less "dense" it is if the
+	## geometries being shown do not increase in number. So a very
+	## small number e.g. zero means that there are no geometries in
+	## view at all. As more and more geometries become visible, the
+	## density number will increase.
+	##
+	## There is no absolute value that says that a given area is
+	## "dense" - it will depend on the database. SO best practice
+	## is to find a representative area that reasonably represents
+	## "dense-ness" for your database and use the density number
+	## that is returned as a benchmark number to compare other
+	## areas to i.e. are they more or less dense than that? By
+	## comparing densities you can use a rule of thumb on whether a
+	## given area should warrant pre-caching.tb.
+	##
+	## Also returns the total number of visible geometries.
+	##
+	_local gs << .map_view.get_visible_geometry_set()
+	_local num_geoms << gs.size
+
+	constraint_bounds << constraint_bounds.default(.map_view.current_view_bounds)
+	
+	_local bd << constraint_bounds
+	_local bl, map_density
+
+	_if bd.width < bd.height
+	_then
+		bl << bd.height
+	_else
+		bl << bd.width
+	_endif 
+
+	map_density << num_geoms / bl
+	#write("Geometry density: ", map_density << num_geoms / bl, " (", num_geoms, ") geometries")
+
+	_return map_density, num_geoms
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache})
+_method tile_boundary_generator.map_density_at_zoom(zoom)
+	## 
+	##
+	_dynamic !print_float_precision!
+
+	!print_float_precision! << 15
+	
+	_self.goto_zoom_level(zoom)
+
+	_return _self.current_map_density()
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache}, usage={redefinable})
+_method tile_boundary_generator.sample_params()
+	## 
+	## Returns a sample set of parameters as a hash_table that can
+	## be used as a template for the optional PARAMS parameter in
+	## tile_boundary_generator.generate_tile_config().
+	##
+	
+	_local params << hash_table.new()
+	params[:description] << "Test"
+	params[:servername] << "wnodndsts001"
+	params[:serverport] << 80
+	params[:layernames] << %" + "Land" +%" + ", " + %" + "Aerial" + %" + ", " + %" + "building" + %" + ", " + %" + "Midwest_UG" + %" + ", " + %" + "Service_Points" + %"
+	params[:stylename] << ""
+	params[:format] << "image/png"
+	params[:tilematrixset] << "EPSG-900913"
+	params[:startzoomlevel] << 16
+	params[:stopzoomlevel] << 17
+
+	_return params
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache}, usage={redefinable})
+_method tile_boundary_generator.get_wire_center(name)
+	## 
+	## 
+	_local v << gis_program_manager.databases[:gis]
+	_local tab << v.collections[:cl_wire_center]
+	_local pr << predicate.eq(:wire_center_name, name)
+	_local results << tab.select(pr)
+	_local wc
+
+	_if results.size > 0
+	_then
+		wc << results.read_stream().get()
+	_endif
+
+	_return wc
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache}, usage={redefinable})
+_method tile_boundary_generator.goto_wire_center(name)
+	## 
+	## 
+	_local wc << _self.get_wire_center(name)
+	_local vd << .map_view.calculate_view_for_goto_bounds(wc.boundary.bounds)
+	.map_view.set_view(vd)
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache}, usage={redefinable})
+_method tile_boundary_generator.list_wire_center_densities()
+	## 
+	## 
+	_local v << gis_program_manager.databases[:gis]
+	_local tab << v.collections[:cl_wire_center]
+
+	_for a_rec _over tab.fast_elements()
+	_loop
+		_self.goto_wire_center(a_rec.wire_center_name)
+		a_geom << a_rec.boundary
+		_if a_geom _isnt _unset
+		_then 
+			bd << a_rec.boundary.bounds
+			d << _self.current_map_density(bd)
+			_if d _is _unset _then _return _endif 
+			write(a_rec.wire_center_name, ", ", d)
+		_else
+			write(a_rec.wire_center_name, ", No geometry!")
+		_endif 
+	_endloop
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache}, usage={redefinable})
+_method tile_boundary_generator.generate_config_files(dir)
+	## 
+	## 
+	_local v << gis_program_manager.databases[:gis]
+	_local tab << v.collections[:cl_wire_center]
+	_local params << _self.sample_params()
+
+	_for a_rec _over tab.fast_elements()
+	_loop
+		_local fn << system.pathname_from_components("config_" + a_rec.wire_center_name + ".json", dir)
+		_local s << external_text_output_stream.new(fn)
+
+		_protect 
+			_if a_rec.boundary _isnt _unset
+			_then 
+				_self.goto_wire_center(a_rec.wire_center_name)
+				_self.generate_tile_config(10, params, _true, s, a_rec.boundary)
+			_endif
+		_protection
+			s.close()
+		_endprotect 
+	_endloop 
+_endmethod
+$
+
+_pragma(classify_level=advanced, topic={tile_cache}, usage={redefinable})
+_method tile_boundary_generator.generate_complex_config_files(dir)
+	## 
+	## 
+	_local v << gis_program_manager.databases[:gis]
+	_local tab << v.collections[:cl_wire_center]
+	_local params << _self.sample_params()
+
+	_for a_rec _over tab.fast_elements()
+	_loop
+		_local fn << system.pathname_from_components("config_" + a_rec.wire_center_name + ".json", dir)
+		_local s 
+
+		_if a_rec.boundary _isnt _unset
+		_then 
+			_self.goto_wire_center(a_rec.wire_center_name)
+			a_geom << a_rec.boundary
+			_if a_geom _isnt _unset
+			_then 
+				bd << a_rec.boundary.bounds
+				d << _self.current_map_density(bd)
+				_if d _isnt _unset
+				_then
+					_if d > 0.03
+					_then
+						write(a_rec.wire_center_name, " - simple, skipping")
+					_else
+						write(a_rec.wire_center_name, " - complex")
+						_protect 
+							s << external_text_output_stream.new(fn)
+							_self.generate_tile_config(10, params, _false, s, a_rec.boundary)
+						_protection
+							s.close()
+						_endprotect 
+					_endif 
+					
+				_endif
+			_else
+				write(a_rec, " doesn't have any geometry")
+			_endif 
+		_endif
+	_endloop 
+_endmethod
+$
+
+_global find_best_area <<
+_proc@find_best_area(tb)
+	##
+	## This procedure will find a best zoom level in terms of data
+	## density based on the current map view window and a fixed
+	## display scale. May be useful in determining a potential area
+	## to cache if you do not already have an operation area or
+	## other entity to target.
+	##
+	
+	_local best_density
+	_local best_zoom
+	_for zoom _over range(0, 21)
+	_loop
+		_local density << tb.map_density_at_zoom(zoom)
+		_if best_density _is _unset
+		_then
+			best_density << density
+			best_zoom << zoom
+		_else
+			_if density > best_density
+			_then
+				best_density << density
+				best_zoom << zoom
+			_endif
+		_endif 
+	_endloop
+
+	>> best_density, best_zoom
+ _endproc
+$
+
+				    

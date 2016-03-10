@@ -1,0 +1,119 @@
+_global generate_cache_list <<
+_proc@generate_cache_list()
+	_local wcs << {"DESMIADT",
+		       "CDRRIADT",
+		       "DUBQIATC",
+		       "DESMIAEA",
+		       "IWCYIATC",
+		       "DESMIAAW",
+		       "WTRLIADT",
+		       "ANKNIACO",
+		       "DESMIANW",
+		       "CNBLIAWA",
+		       "GLBGILXDDS0",
+		       "PEKNILXDDS0",
+		       "WRSWINXADS0",
+		       "FKLNINXADS0",
+		       "PLMOINXADS0",
+		       "WHLDINXARS1",
+		       "OSSEMNXODS0",
+		       "HSNGMNXHDS0",
+		       "ALXNMNXADS0",
+		       "ROCHMNRO",
+		       "STCDMNTO",
+		       "ANOKMNAN",
+		       "MPLSMNBE",
+		       "EAGNMNLB",
+		       "BLANMNBL",
+		       "CNRPMNND",
+		       "WBLKMNWB",
+		       "WSPLMNWS",
+		       "GDMRMNGM",
+		       "BRNRMNBR",
+		       "SHVWMNRI",
+		       "HPKNMNHO",
+		       "MPWDMNMA",
+		       "STPLMNMK",
+		       "NSPLMNPR",
+		       "FRFLMNFB",
+		       "BSMRNDBC",
+		       "DCSNNDBC",
+		       "FARGNDBC",
+		       "WFRGNDBC",
+		       "GDFRNDBC",
+		       "MNDNNDBA",
+		       "BLFDNDBC",
+		       "JMTWNDBC",
+		       "SCTSNEXUDS0",
+		       "ALNCNENW",
+		       "VLNTNENW",
+		       "OMAHNEHA",
+		       "GDISNENW",
+		       "CRFRNENW",
+		       "OMAHNEFO",
+		       "OMAHNE84",
+		       "ANWONENW",
+		       "NPLTNENW",
+		       "HRSNNENW",
+		       "OMAHNENW",
+		       "CHDRNENW",
+		       "SDNYNENW",
+		       "ONELNENW",
+		       "ATSNNENW",
+		       "BRPTNENW",
+		       "OMAHNECE",
+		       "LIMAOHXA22H",
+		       "WSTROHXA26E",
+		       "MTVROHXA39E",
+		       "PTSKOHXA92C",
+		       "MNFDOHXA52C",
+		       "SDNYOHXA49C",
+		       "MASNOHXARS1",
+		       "GNVLOHXA54E",
+		       "LBNNOHXAG00",
+		       "WRRNOHXA39E",
+		       "SNBYOHXBRS1",
+		       "MLBGOHXARS1",
+		       "MYVIOHXARS1",
+		       "BCYROHXARS1",
+		       "BLFRSDCO",
+		       "SXFLSDCO",
+		       "RPCYSDCO",
+		       "ABRDSDCO",
+		       "RDFDSDCO",
+		       "WTTWSDCO",
+		       "FTPRSDCE",
+		       "MRTWSDCO",
+		       "HURNSDCO",
+		       "MLLRSDCO",
+		       "TMLKSDCO",
+		       "STRGSDCO"}
+
+	_local v << gis_program_manager.databases[:gis]
+	_local tab << v.collections[:cl_wire_center]
+	_local pr
+
+	_for wc _over wcs.fast_elements()
+	_loop
+		pr << predicate.eq(:wc_id, wc)
+		a_wc << tab.select(pr).an_element()
+
+		_if a_wc _is _unset
+		_then
+			pr << predicate.eq(:wc_id, wc.subseq(1, wc.size - 3))
+			a_wc << tab.select(pr).an_element()
+			_if a_wc _isnt _unset
+			_then 
+				#write("REM Could not find wire center ", wc)
+				write("node tilecacher.js -c " + %" + "simple\config_" + a_wc.wire_center_name + ".json" + %" + " -w 500 -r 5000 -i 0 -j 17 -k localhost -m " + %" + "[Aerial,Building,Mid_West_UG,Service_Points]" + %" + " -v")
+			_else
+				write("REM Could not find wire center ", wc)
+				_continue 
+			_endif 
+			
+		_endif
+
+		#write("node tilecacher.js -c " + %" + "simple\config_" + a_wc.wire_center_name + ".json" + %" + " -w 500 -r 5000 -i 0 -j 17 -k localhost -m " + %" + "[Aerial,Building,Mid_West_UG,Service_Points]" + %" + " -v")
+	_endloop
+_endproc
+$
