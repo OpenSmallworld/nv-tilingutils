@@ -1,5 +1,5 @@
 # tilingutils
-Magik utilities for creating tiling configurations for the tilecacher
+Magik utilities for creating tiling configurations for the [tilecacher](https://github.build.ge.com/105002616/tilecacher).
 
 The key utility is in tile_boundary_generator.magik, which defines a Magik calls called tile_boundary_generator. This class provides a method generate_tile_config(), which will use the current view of a running application to calculate a bounding area for a tilecacher config file. This utility was used to generate a set of config files for CenturyLink wire centers, both in "simple" and "complex" forms (see comments in the code).
 
